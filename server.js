@@ -70,7 +70,7 @@ mqttClient.on('message', async (topic, message) => {
       });
     }
   } catch (error) {
-    console.error('Error processing MQTT message:', error);
+    console.error(`Error processing MQTT (${topic}):`, error);
   }
 });
 
@@ -265,6 +265,19 @@ app.get('/health', (req, res) => {
 // Допоміжні функції
 async function saveDeviceStatus(deviceId, status) {
   try {
+    // Спочатку перевіряємо чи існує пристрій в таблиці devices
+    const deviceExists = await pool.query(
+      'SELECT device_id FROM devices WHERE device_id = $1',
+      [deviceId]
+    );
+    
+    // Якщо пристрою немає в базі, пропускаємо збереження історії
+    if (deviceExists.rows.length === 0) {
+      console.log(`Device ${deviceId} not found in database, skipping history save`);
+      return;
+    }
+    
+    // Зберігаємо тільки якщо пристрій зареєстрований
     await pool.query(
       `INSERT INTO device_history (device_id, relay_state, wifi_rssi, uptime, free_heap)
        VALUES ($1, $2, $3, $4, $5)`,
@@ -278,9 +291,14 @@ async function saveDeviceStatus(deviceId, status) {
 // Ініціалізація бази даних
 async function initDatabase() {
   try {
+    // Видаляємо старі таблиці для чистого старту
+    await pool.query('DROP TABLE IF EXISTS device_history CASCADE');
+    await pool.query('DROP TABLE IF EXISTS devices CASCADE');
+    await pool.query('DROP TABLE IF EXISTS users CASCADE');
+    
     // Таблиця користувачів
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE users (
         id SERIAL PRIMARY KEY,
         telegram_id BIGINT UNIQUE NOT NULL,
         username VARCHAR(255),
@@ -290,7 +308,7 @@ async function initDatabase() {
     
     // Таблиця пристроїв
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS devices (
+      CREATE TABLE devices (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         device_id VARCHAR(255) UNIQUE NOT NULL,
@@ -301,7 +319,7 @@ async function initDatabase() {
     
     // Таблиця історії даних
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS device_history (
+      CREATE TABLE device_history (
         id SERIAL PRIMARY KEY,
         device_id VARCHAR(255),
         relay_state BOOLEAN,
@@ -315,7 +333,7 @@ async function initDatabase() {
     
     // Індекси для оптимізації
     await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_device_history_device_id_timestamp 
+      CREATE INDEX idx_device_history_device_id_timestamp 
       ON device_history(device_id, timestamp DESC)
     `);
     
